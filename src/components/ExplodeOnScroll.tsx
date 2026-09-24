@@ -3,24 +3,24 @@
 /**
  * ExplodeOnScroll — React Three Fiber scroll-driven explode.
  * Explodes GLB parts along vectors from model center → part origin.
+ *
+ * Explode distance is in world units on the fitted model (max dim ≈ 2).
+ * Materials are softened so the CAD solids stay readable without a remote HDR.
  */
 import {
   useMemo,
   useRef,
   useEffect,
+  useLayoutEffect,
   useState,
   Suspense,
   type RefObject,
   type CSSProperties,
 } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import {
-  OrbitControls,
-  useGLTF,
-  Environment,
-  ContactShadows,
-} from "@react-three/drei";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { OrbitControls, useGLTF, ContactShadows } from "@react-three/drei";
 import * as THREE from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 type PartEntry = {
   obj: THREE.Object3D;
@@ -58,6 +58,36 @@ function useScrollProgress(targetRef: RefObject<HTMLElement | null> | null) {
   return t;
 }
 
+function softenMaterial(material: THREE.Material): THREE.Material {
+  const cloned = material.clone();
+  if (cloned instanceof THREE.MeshStandardMaterial) {
+    cloned.metalness = Math.min(cloned.metalness, 0.18);
+    cloned.roughness = Math.max(cloned.roughness, 0.55);
+    cloned.envMapIntensity = 0.85;
+  }
+  return cloned;
+}
+
+function LocalEnvironment() {
+  const { gl, scene } = useThree();
+
+  useLayoutEffect(() => {
+    const pmrem = new THREE.PMREMGenerator(gl);
+    const room = new RoomEnvironment();
+    const envMap = pmrem.fromScene(room, 0.04).texture;
+    const previous = scene.environment;
+    scene.environment = envMap;
+    room.dispose();
+    return () => {
+      scene.environment = previous;
+      envMap.dispose();
+      pmrem.dispose();
+    };
+  }, [gl, scene]);
+
+  return null;
+}
+
 function ExplodingModel({
   url,
   progress,
@@ -70,16 +100,28 @@ function ExplodingModel({
   const { scene } = useGLTF(url);
   const root = useMemo(() => scene.clone(true), [scene]);
 
-  const parts = useMemo(() => {
+  const { parts, localExplode } = useMemo(() => {
     const list: PartEntry[] = [];
     root.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(root);
     const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z, 1e-3);
+    const fitScale = 2 / maxDim;
+
     root.position.sub(center);
+    root.scale.setScalar(fitScale);
 
     root.traverse((obj) => {
       if (!(obj as THREE.Mesh).isMesh) return;
       const mesh = obj as THREE.Mesh;
+
+      if (Array.isArray(mesh.material)) {
+        mesh.material = mesh.material.map(softenMaterial);
+      } else if (mesh.material) {
+        mesh.material = softenMaterial(mesh.material);
+      }
+
       const rest = mesh.position.clone();
       let dir = rest.clone();
 
@@ -93,33 +135,18 @@ function ExplodingModel({
         dir.normalize();
       }
 
-      const extras = mesh.userData || {};
-      if (
-        Array.isArray(extras.explode_dir) &&
-        extras.explode_dir.length === 3
-      ) {
-        dir.fromArray(extras.explode_dir).normalize();
-      }
-      if (
-        Array.isArray(extras.rest_location) &&
-        extras.rest_location.length === 3
-      ) {
-        rest.fromArray(extras.rest_location);
-      }
-
       list.push({ obj: mesh, rest, dir });
     });
 
-    const size = box.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z, 1e-3);
-    root.scale.setScalar(2 / maxDim);
-    return list;
-  }, [root]);
+    // explodeDistance is world-space on the fitted model; convert back
+    // to the unscaled mesh local units that `mesh.position` uses.
+    return { parts: list, localExplode: explodeDistance / fitScale };
+  }, [root, explodeDistance]);
 
   useFrame(() => {
     const p = Math.min(Math.max(progress, 0), 1);
     const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
-    const dist = explodeDistance * e;
+    const dist = localExplode * e;
     for (const { obj, rest, dir } of parts) {
       obj.position.set(
         rest.x + dir.x * dist,
@@ -166,19 +193,25 @@ export function ExplodeOnScroll({
         ...style,
       }}
     >
-      <Canvas camera={{ position: [2.4, 1.6, 2.4], fov: 40 }} dpr={[1, 2]}>
+      <Canvas
+        camera={{ position: [2.6, 1.7, 2.6], fov: 40 }}
+        dpr={[1, 2]}
+        gl={{ toneMappingExposure: 1.15 }}
+      >
         <color attach="background" args={["#0e1014"]} />
-        <ambientLight intensity={0.45} />
-        <directionalLight position={[4, 6, 2]} intensity={1.2} />
+        <hemisphereLight args={["#f3f6fb", "#2a2d33", 0.85]} />
+        <ambientLight intensity={0.55} />
+        <directionalLight position={[4, 6, 2]} intensity={1.65} />
+        <directionalLight position={[-3, 1.5, -2]} intensity={0.45} />
+        <LocalEnvironment />
         <Suspense fallback={null}>
           <ExplodingModel
             url={url}
             progress={progress}
             explodeDistance={explodeDistance}
           />
-          <Environment preset="city" />
-          <ContactShadows opacity={0.35} scale={8} blur={2.5} />
         </Suspense>
+        <ContactShadows opacity={0.35} scale={8} blur={2.5} />
         <OrbitControls enablePan={false} minDistance={1.5} maxDistance={8} />
       </Canvas>
       {showProgress && (
