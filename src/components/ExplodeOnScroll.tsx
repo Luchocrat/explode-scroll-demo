@@ -2,7 +2,8 @@
 
 /**
  * ExplodeOnScroll — React Three Fiber scroll-driven explode.
- * 7 GLB solids pull apart along center → part-center vectors.
+ * Part_* solids pull apart along center → part-center vectors.
+ * Logo_* meshes stay parented to the body and are not exploded.
  *
  * Explode distance is world units on the fitted model (max dim ≈ 2).
  * Local RoomEnvironment IBL so a missing HDR cannot blank the scene.
@@ -63,15 +64,8 @@ function useScrollProgress(targetRef: RefObject<HTMLElement | null> | null) {
   return t;
 }
 
-function softenMaterial(material: THREE.Material): THREE.Material {
-  const cloned = material.clone();
-  if (cloned instanceof THREE.MeshStandardMaterial) {
-    cloned.metalness = Math.min(cloned.metalness, 0.22);
-    cloned.roughness = Math.max(cloned.roughness, 0.48);
-    cloned.envMapIntensity = 0.55;
-    cloned.color.offsetHSL(0, 0.12, 0);
-  }
-  return cloned;
+function isExplodablePart(obj: THREE.Object3D): boolean {
+  return /^Part_\d+/i.test(obj.name);
 }
 
 function LocalEnvironment() {
@@ -105,18 +99,11 @@ function LocalEnvironment() {
   return null;
 }
 
-function reparentMeshes(scene: THREE.Object3D): THREE.Group {
+function toGroup(scene: THREE.Object3D): THREE.Group {
   const group = new THREE.Group();
-  const meshes: THREE.Object3D[] = [];
-  scene.updateMatrixWorld(true);
-  scene.traverse((obj) => {
-    if ((obj as THREE.Mesh).isMesh) meshes.push(obj);
-  });
-  for (const mesh of meshes) {
-    mesh.updateWorldMatrix(true, false);
-    const world = new THREE.Matrix4().copy(mesh.matrixWorld);
-    group.add(mesh);
-    world.decompose(mesh.position, mesh.quaternion, mesh.scale);
+  group.name = "Happyhead";
+  for (const child of [...scene.children]) {
+    group.add(child);
   }
   return group;
 }
@@ -131,7 +118,7 @@ function ExplodingModel({
   explodeDistance?: number;
 }) {
   const { scene } = useGLTF(url);
-  const root = useMemo(() => reparentMeshes(scene.clone(true)), [scene]);
+  const root = useMemo(() => toGroup(scene.clone(true)), [scene]);
 
   const parts = useMemo(() => {
     const list: PartEntry[] = [];
@@ -153,13 +140,7 @@ function ExplodingModel({
     root.traverse((obj) => {
       if (!(obj as THREE.Mesh).isMesh) return;
       const mesh = obj as THREE.Mesh;
-      if (!mesh.parent) return;
-
-      if (Array.isArray(mesh.material)) {
-        mesh.material = mesh.material.map(softenMaterial);
-      } else if (mesh.material) {
-        mesh.material = softenMaterial(mesh.material);
-      }
+      if (!mesh.parent || !isExplodablePart(mesh)) return;
 
       const restLocal = mesh.position.clone();
       const partCenter = new THREE.Box3()
@@ -251,7 +232,7 @@ export function ExplodeOnScroll({
       }}
     >
       <Canvas
-        camera={{ position: [3.8, 1.8, 3.8], fov: 42 }}
+        camera={{ position: [3.4, 1.6, -3.6], fov: 42 }}
         dpr={[1, 2]}
         gl={{ toneMappingExposure: 0.92 }}
       >
