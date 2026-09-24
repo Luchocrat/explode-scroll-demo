@@ -227,6 +227,17 @@ export function ExplodeOnScroll({
   const progress = useScrollProgress(scrollRef || localRef);
   const { active: modelLoading } = useProgress();
 
+  useEffect(() => {
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) return;
+      const target = event.target as Element | null;
+      if (!target?.closest?.("canvas")) return;
+      window.scrollBy(0, event.deltaY);
+    };
+    window.addEventListener("wheel", onWheel, { passive: true });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, []);
+
   return (
     <div
       ref={scrollRef ? undefined : localRef}
@@ -240,7 +251,7 @@ export function ExplodeOnScroll({
       }}
     >
       <Canvas
-        camera={{ position: [3.4, 1.6, 3.4], fov: 40 }}
+        camera={{ position: [3.8, 1.8, 3.8], fov: 42 }}
         dpr={[1, 2]}
         gl={{ toneMappingExposure: 0.92 }}
       >
