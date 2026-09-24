@@ -18,7 +18,12 @@ import {
   type CSSProperties,
 } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, useGLTF, ContactShadows } from "@react-three/drei";
+import {
+  OrbitControls,
+  useGLTF,
+  ContactShadows,
+  useProgress,
+} from "@react-three/drei";
 import * as THREE from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
@@ -61,9 +66,10 @@ function useScrollProgress(targetRef: RefObject<HTMLElement | null> | null) {
 function softenMaterial(material: THREE.Material): THREE.Material {
   const cloned = material.clone();
   if (cloned instanceof THREE.MeshStandardMaterial) {
-    cloned.metalness = Math.min(cloned.metalness, 0.18);
-    cloned.roughness = Math.max(cloned.roughness, 0.55);
-    cloned.envMapIntensity = 0.85;
+    cloned.metalness = Math.min(cloned.metalness, 0.22);
+    cloned.roughness = Math.max(cloned.roughness, 0.48);
+    cloned.envMapIntensity = 0.55;
+    cloned.color.offsetHSL(0, 0.12, 0);
   }
   return cloned;
 }
@@ -72,16 +78,27 @@ function LocalEnvironment() {
   const { gl, scene } = useThree();
 
   useLayoutEffect(() => {
-    const pmrem = new THREE.PMREMGenerator(gl);
-    const room = new RoomEnvironment();
-    const envMap = pmrem.fromScene(room, 0.04).texture;
     const previous = scene.environment;
-    scene.environment = envMap;
-    room.dispose();
+    const previousIntensity = scene.environmentIntensity;
+    let envMap: THREE.Texture | undefined;
+    let pmrem: THREE.PMREMGenerator | undefined;
+    let room: RoomEnvironment | undefined;
+    try {
+      pmrem = new THREE.PMREMGenerator(gl);
+      room = new RoomEnvironment();
+      envMap = pmrem.fromScene(room, 0.04).texture;
+      scene.environment = envMap;
+      scene.environmentIntensity = 0.45;
+    } catch {
+      scene.environment = previous;
+      scene.environmentIntensity = previousIntensity;
+    }
     return () => {
       scene.environment = previous;
-      envMap.dispose();
-      pmrem.dispose();
+      scene.environmentIntensity = previousIntensity;
+      envMap?.dispose();
+      room?.dispose();
+      pmrem?.dispose();
     };
   }, [gl, scene]);
 
@@ -111,6 +128,7 @@ function ExplodingModel({
 
     root.position.sub(center);
     root.scale.setScalar(fitScale);
+    root.updateMatrixWorld(true);
 
     root.traverse((obj) => {
       if (!(obj as THREE.Mesh).isMesh) return;
@@ -123,14 +141,16 @@ function ExplodingModel({
       }
 
       const rest = mesh.position.clone();
-      let dir = rest.clone();
+      const partBox = new THREE.Box3().setFromObject(mesh);
+      const partCenter = partBox.getCenter(new THREE.Vector3());
+      root.worldToLocal(partCenter);
+      let dir = partCenter.clone();
 
       if (dir.lengthSq() < 1e-8) {
-        mesh.geometry.computeBoundingBox();
-        const c = new THREE.Vector3();
-        mesh.geometry.boundingBox!.getCenter(c);
-        dir =
-          c.lengthSq() > 1e-8 ? c.normalize() : new THREE.Vector3(0, 1, 0);
+        dir = rest.clone();
+      }
+      if (dir.lengthSq() < 1e-8) {
+        dir.set(0, 1, 0);
       } else {
         dir.normalize();
       }
@@ -180,6 +200,7 @@ export function ExplodeOnScroll({
 }: ExplodeOnScrollProps) {
   const localRef = useRef<HTMLDivElement>(null);
   const progress = useScrollProgress(scrollRef || localRef);
+  const { active: modelLoading } = useProgress();
 
   return (
     <div
@@ -194,15 +215,15 @@ export function ExplodeOnScroll({
       }}
     >
       <Canvas
-        camera={{ position: [2.6, 1.7, 2.6], fov: 40 }}
+        camera={{ position: [4.4, 2.6, 4.4], fov: 40 }}
         dpr={[1, 2]}
-        gl={{ toneMappingExposure: 1.15 }}
+        gl={{ toneMappingExposure: 0.92 }}
       >
         <color attach="background" args={["#0e1014"]} />
-        <hemisphereLight args={["#f3f6fb", "#2a2d33", 0.85]} />
-        <ambientLight intensity={0.55} />
-        <directionalLight position={[4, 6, 2]} intensity={1.65} />
-        <directionalLight position={[-3, 1.5, -2]} intensity={0.45} />
+        <hemisphereLight args={["#e8eef6", "#1c1e22", 0.55]} />
+        <ambientLight intensity={0.28} />
+        <directionalLight position={[4, 6, 2]} intensity={1.15} />
+        <directionalLight position={[-3, 1.5, -2]} intensity={0.35} />
         <LocalEnvironment />
         <Suspense fallback={null}>
           <ExplodingModel
@@ -211,9 +232,25 @@ export function ExplodeOnScroll({
             explodeDistance={explodeDistance}
           />
         </Suspense>
-        <ContactShadows opacity={0.35} scale={8} blur={2.5} />
-        <OrbitControls enablePan={false} minDistance={1.5} maxDistance={8} />
+        <ContactShadows opacity={0.28} scale={10} blur={2.8} />
+        <OrbitControls enablePan={false} minDistance={2.4} maxDistance={12} />
       </Canvas>
+      {modelLoading && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "grid",
+            placeItems: "center",
+            color: "#c8ccd4",
+            fontFamily: "ui-sans-serif, system-ui, sans-serif",
+            fontSize: 13,
+            pointerEvents: "none",
+          }}
+        >
+          Loading model…
+        </div>
+      )}
       {showProgress && (
         <div
           style={{
