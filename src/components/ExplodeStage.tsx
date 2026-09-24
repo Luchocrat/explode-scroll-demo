@@ -15,16 +15,15 @@ export default function ExplodeStage() {
   return (
     <>
       <p className="hint">Scroll to explode · drag to orbit</p>
-      <div ref={scrollRef} className="scroll-root">
-        <div className="stage">
-          <ExplodeOnScroll
-            url="/model.glb"
-            scrollRef={scrollRef}
-            explodeDistance={1.4}
-            showProgress
-          />
-        </div>
+      <div className="stage">
+        <ExplodeOnScroll
+          url="/model.glb"
+          scrollRef={scrollRef}
+          explodeDistance={0.85}
+          showProgress
+        />
       </div>
+      <div ref={scrollRef} className="scroll-root" aria-hidden />
     </>
   );
 }

@@ -2,11 +2,10 @@
 
 /**
  * ExplodeOnScroll — React Three Fiber scroll-driven explode.
- * Explodes GLB parts along vectors from model center → part origin.
+ * 7 GLB solids pull apart along center → part-center vectors.
  *
- * Explode distance is world units on the fitted model (max dim ≈ 2),
- * applied via parent.worldToLocal so root scale cannot shrink the motion.
- * Materials are softened so the CAD solids stay readable without a remote HDR.
+ * Explode distance is world units on the fitted model (max dim ≈ 2).
+ * Local RoomEnvironment IBL so a missing HDR cannot blank the scene.
  */
 import {
   useMemo,
@@ -30,9 +29,8 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 
 type PartEntry = {
   obj: THREE.Object3D;
-  restWorld: THREE.Vector3;
-  dirWorld: THREE.Vector3;
-  parent: THREE.Object3D;
+  restLocal: THREE.Vector3;
+  dirLocal: THREE.Vector3;
 };
 
 function useScrollProgress(targetRef: RefObject<HTMLElement | null> | null) {
@@ -107,18 +105,33 @@ function LocalEnvironment() {
   return null;
 }
 
+function reparentMeshes(scene: THREE.Object3D): THREE.Group {
+  const group = new THREE.Group();
+  const meshes: THREE.Object3D[] = [];
+  scene.updateMatrixWorld(true);
+  scene.traverse((obj) => {
+    if ((obj as THREE.Mesh).isMesh) meshes.push(obj);
+  });
+  for (const mesh of meshes) {
+    mesh.updateWorldMatrix(true, false);
+    const world = new THREE.Matrix4().copy(mesh.matrixWorld);
+    group.add(mesh);
+    world.decompose(mesh.position, mesh.quaternion, mesh.scale);
+  }
+  return group;
+}
+
 function ExplodingModel({
   url,
   progress,
-  explodeDistance = 1.35,
+  explodeDistance = 0.85,
 }: {
   url: string;
   progress: number;
   explodeDistance?: number;
 }) {
   const { scene } = useGLTF(url);
-  const root = useMemo(() => scene.clone(true), [scene]);
-  const scratch = useMemo(() => new THREE.Vector3(), []);
+  const root = useMemo(() => reparentMeshes(scene.clone(true)), [scene]);
 
   const parts = useMemo(() => {
     const list: PartEntry[] = [];
@@ -129,12 +142,13 @@ function ExplodingModel({
     const maxDim = Math.max(size.x, size.y, size.z, 1e-3);
     const fitScale = 2 / maxDim;
 
-    root.position.sub(center);
+    root.position.copy(center.multiplyScalar(-fitScale));
     root.scale.setScalar(fitScale);
     root.updateMatrixWorld(true);
 
-    const modelCenter = new THREE.Vector3();
-    new THREE.Box3().setFromObject(root).getCenter(modelCenter);
+    const modelCenter = new THREE.Box3()
+      .setFromObject(root)
+      .getCenter(new THREE.Vector3());
 
     root.traverse((obj) => {
       if (!(obj as THREE.Mesh).isMesh) return;
@@ -147,24 +161,28 @@ function ExplodingModel({
         mesh.material = softenMaterial(mesh.material);
       }
 
-      const restWorld = new THREE.Vector3();
-      mesh.getWorldPosition(restWorld);
-
+      const restLocal = mesh.position.clone();
       const partCenter = new THREE.Box3()
         .setFromObject(mesh)
         .getCenter(new THREE.Vector3());
-      let dirWorld = partCenter.sub(modelCenter);
-
-      if (dirWorld.lengthSq() < 1e-8) {
-        dirWorld = restWorld.clone().sub(modelCenter);
-      }
+      const dirWorld = partCenter.sub(modelCenter);
       if (dirWorld.lengthSq() < 1e-8) {
         dirWorld.set(0, 1, 0);
       } else {
         dirWorld.normalize();
       }
 
-      list.push({ obj: mesh, restWorld, dirWorld, parent: mesh.parent });
+      // One world-space unit → parent-local, so explodeDistance stays
+      // in fitted-model units regardless of root scale.
+      const parent = mesh.parent;
+      const worldA = new THREE.Vector3();
+      parent.getWorldPosition(worldA);
+      const worldB = worldA.clone().add(dirWorld);
+      const localA = parent.worldToLocal(worldA.clone());
+      const localB = parent.worldToLocal(worldB);
+      const dirLocal = localB.sub(localA);
+
+      list.push({ obj: mesh, restLocal, dirLocal });
     });
 
     return list;
@@ -174,10 +192,12 @@ function ExplodingModel({
     const p = Math.min(Math.max(progress, 0), 1);
     const e = p * p * (3 - 2 * p);
     const dist = explodeDistance * e;
-    for (const { obj, restWorld, dirWorld, parent } of parts) {
-      scratch.copy(restWorld).addScaledVector(dirWorld, dist);
-      parent.worldToLocal(scratch);
-      obj.position.copy(scratch);
+    for (const { obj, restLocal, dirLocal } of parts) {
+      obj.position.set(
+        restLocal.x + dirLocal.x * dist,
+        restLocal.y + dirLocal.y * dist,
+        restLocal.z + dirLocal.z * dist,
+      );
     }
   });
 
@@ -198,7 +218,7 @@ export type ExplodeOnScrollProps = {
 export function ExplodeOnScroll({
   url = "/model.glb",
   scrollRef = null,
-  explodeDistance = 1.35,
+  explodeDistance = 0.85,
   className,
   style,
   showProgress = true,
@@ -220,7 +240,7 @@ export function ExplodeOnScroll({
       }}
     >
       <Canvas
-        camera={{ position: [4.8, 2.8, 4.8], fov: 45 }}
+        camera={{ position: [3.4, 1.6, 3.4], fov: 40 }}
         dpr={[1, 2]}
         gl={{ toneMappingExposure: 0.92 }}
       >
@@ -241,8 +261,10 @@ export function ExplodeOnScroll({
         <OrbitControls
           enablePan={false}
           enableZoom={false}
-          minDistance={3}
-          maxDistance={12}
+          minDistance={4.2}
+          maxDistance={9}
+          minPolarAngle={Math.PI * 0.28}
+          maxPolarAngle={Math.PI * 0.72}
         />
       </Canvas>
       {modelLoading && (
@@ -262,17 +284,7 @@ export function ExplodeOnScroll({
         </div>
       )}
       {showProgress && (
-        <div
-          style={{
-            position: "absolute",
-            left: 16,
-            bottom: 16,
-            color: "#c8ccd4",
-            fontFamily: "ui-sans-serif, system-ui, sans-serif",
-            fontSize: 12,
-            opacity: 0.85,
-          }}
-        >
+        <div className="progress-hud">
           explode {(progress * 100).toFixed(0)}% · scroll to assemble / pull
           apart
         </div>
