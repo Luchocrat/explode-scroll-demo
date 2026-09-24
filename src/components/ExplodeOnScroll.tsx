@@ -127,12 +127,13 @@ function FrameExploded({
     box.getBoundingSphere(sphere);
     if (!Number.isFinite(sphere.radius) || sphere.radius < 1e-4) return;
 
-    controls.target.lerp(sphere.center, 0.22);
     offset.copy(camera.position).sub(controls.target);
     spherical.setFromVector3(offset);
+    const reach = sphere.center.length() + sphere.radius;
     const fov = ((camera as THREE.PerspectiveCamera).fov * Math.PI) / 180;
-    const fit = (sphere.radius * 1.45) / Math.sin(Math.max(fov / 2, 1e-3));
-    spherical.radius = Math.min(14, Math.max(3.1, fit));
+    const fit = (reach * 1.35) / Math.sin(Math.max(fov / 2, 1e-3));
+    spherical.radius = Math.min(16, Math.max(3.4, fit));
+    controls.target.set(0, 0, 0);
     camera.position.copy(controls.target).add(offset.setFromSpherical(spherical));
     camera.lookAt(controls.target);
     controls.update();
@@ -202,7 +203,7 @@ function ExplodingModel({
 
   useFrame(() => {
     const p = Math.min(Math.max(progress, 0), 1);
-    const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+    const e = p * p * (3 - 2 * p);
     const dist = localExplode * e;
     for (const { obj, rest, dir } of parts) {
       obj.position.set(
