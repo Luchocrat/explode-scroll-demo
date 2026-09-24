@@ -105,6 +105,42 @@ function LocalEnvironment() {
   return null;
 }
 
+function FrameExploded({
+  target,
+}: {
+  target: RefObject<THREE.Object3D | null>;
+}) {
+  const { camera } = useThree();
+  const controls = useThree((s) => s.controls) as unknown as
+    | { target: THREE.Vector3; update: () => void }
+    | undefined;
+  const box = useMemo(() => new THREE.Box3(), []);
+  const sphere = useMemo(() => new THREE.Sphere(), []);
+  const offset = useMemo(() => new THREE.Vector3(), []);
+  const spherical = useMemo(() => new THREE.Spherical(), []);
+
+  useFrame(() => {
+    const obj = target.current;
+    if (!obj || !controls || !("isPerspectiveCamera" in camera)) return;
+    box.setFromObject(obj);
+    if (box.isEmpty()) return;
+    box.getBoundingSphere(sphere);
+    if (!Number.isFinite(sphere.radius) || sphere.radius < 1e-4) return;
+
+    controls.target.lerp(sphere.center, 0.22);
+    offset.copy(camera.position).sub(controls.target);
+    spherical.setFromVector3(offset);
+    const fov = ((camera as THREE.PerspectiveCamera).fov * Math.PI) / 180;
+    const fit = (sphere.radius * 1.45) / Math.sin(Math.max(fov / 2, 1e-3));
+    spherical.radius = Math.min(14, Math.max(3.1, fit));
+    camera.position.copy(controls.target).add(offset.setFromSpherical(spherical));
+    camera.lookAt(controls.target);
+    controls.update();
+  });
+
+  return null;
+}
+
 function ExplodingModel({
   url,
   progress,
@@ -114,6 +150,7 @@ function ExplodingModel({
   progress: number;
   explodeDistance?: number;
 }) {
+  const wrapRef = useRef<THREE.Group>(null);
   const { scene } = useGLTF(url);
   const root = useMemo(() => scene.clone(true), [scene]);
 
@@ -176,7 +213,12 @@ function ExplodingModel({
     }
   });
 
-  return <primitive object={root} />;
+  return (
+    <group ref={wrapRef}>
+      <primitive object={root} />
+      <FrameExploded target={wrapRef} />
+    </group>
+  );
 }
 
 useGLTF.preload("/model.glb");
@@ -215,7 +257,7 @@ export function ExplodeOnScroll({
       }}
     >
       <Canvas
-        camera={{ position: [4.4, 2.6, 4.4], fov: 40 }}
+        camera={{ position: [5.2, 3.1, 5.2], fov: 42 }}
         dpr={[1, 2]}
         gl={{ toneMappingExposure: 0.92 }}
       >
@@ -234,10 +276,11 @@ export function ExplodeOnScroll({
         </Suspense>
         <ContactShadows opacity={0.28} scale={10} blur={2.8} />
         <OrbitControls
+          makeDefault
           enablePan={false}
           enableZoom={false}
-          minDistance={2.4}
-          maxDistance={12}
+          minDistance={2.8}
+          maxDistance={14}
         />
       </Canvas>
       {modelLoading && (
