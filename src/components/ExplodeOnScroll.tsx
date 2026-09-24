@@ -233,7 +233,12 @@ export function ExplodeOnScroll({
           />
         </Suspense>
         <ContactShadows opacity={0.28} scale={10} blur={2.8} />
-        <OrbitControls enablePan={false} minDistance={2.4} maxDistance={12} />
+        <OrbitControls
+          enablePan={false}
+          enableZoom={false}
+          minDistance={2.4}
+          maxDistance={12}
+        />
       </Canvas>
       {modelLoading && (
         <div

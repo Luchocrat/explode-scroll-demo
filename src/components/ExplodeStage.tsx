@@ -20,7 +20,7 @@ export default function ExplodeStage() {
           <ExplodeOnScroll
             url="/model.glb"
             scrollRef={scrollRef}
-            explodeDistance={2.15}
+            explodeDistance={1.45}
             showProgress
           />
         </div>
